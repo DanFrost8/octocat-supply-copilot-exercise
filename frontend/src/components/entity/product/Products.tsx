@@ -2,6 +2,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import { useQuery } from 'react-query';
 import { api } from '../../../api/config';
+import { useCart } from '../../../context/CartContext';
 
 interface Product {
   productId: number;
@@ -30,15 +31,19 @@ export default function Products() {
     }));
   };
 
+  const { addToCart } = useCart();
+
   const handleAddToCart = (productId: number) => {
     const quantity = quantities[productId] || 0;
     if (quantity > 0) {
-      // TODO: Implement cart functionality
-      alert(`Added ${quantity} items to cart`);
-      setQuantities(prev => ({
-        ...prev,
-        [productId]: 0
-      }));
+      const product = products?.find(p => p.productId === productId);
+      if (product) {
+        addToCart(product, quantity);
+        setQuantities(prev => ({
+          ...prev,
+          [productId]: 0
+        }));
+      }
     }
   };
 

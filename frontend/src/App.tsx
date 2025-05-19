@@ -6,26 +6,33 @@ import Footer from './components/Footer';
 import Products from './components/entity/product/Products';
 import Login from './components/Login';
 import { AuthProvider } from './context/AuthContext';
+import { CartProvider } from './context/CartContext';
 import AdminProducts from './components/admin/AdminProducts';
+import Cart from './components/Cart';
+import ToastContainer from './components/ui/ToastContainer';
 
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <div className="flex flex-col min-h-screen bg-dark">
-          <Navigation />
-          <main className="flex-grow">
-            <Routes>
-              <Route path="/" element={<Welcome />} />
-              <Route path="/about" element={<About />} />
-              <Route path="/products" element={<Products />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/admin/products" element={<AdminProducts />} />
-            </Routes>
-          </main>
-          <Footer />
-        </div>
-      </Router>
+      <CartProvider>
+        <Router>
+          <div className="flex flex-col min-h-screen bg-dark">
+            <Navigation />
+            <main className="flex-grow">
+              <Routes>
+                <Route path="/" element={<Welcome />} />
+                <Route path="/about" element={<About />} />
+                <Route path="/products" element={<Products />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/admin/products" element={<AdminProducts />} />
+                <Route path="/cart" element={<Cart />} />
+              </Routes>
+            </main>
+            <Footer />
+            <ToastContainer />
+          </div>
+        </Router>
+      </CartProvider>
     </AuthProvider>
   );
 }
