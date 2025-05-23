@@ -1,0 +1,71 @@
+name: Deploy OctoCAT Supply Chain to Azure
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'api/**'
+      - 'frontend/**'
+      - 'infra/**'
+      - '.github/workflows/deploy-to-azure.yml'
+      - 'azure.yaml'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build --workspace=api
+
+      - name: Build Frontend
+        run: npm run build --workspace=frontend
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure Developer CLI
+        uses: azure/setup-azd@v0.1.0
+
+      - name: Deploy with Azure Developer CLI
+        run: |
+          azd provision --no-prompt
+          azd deploy --no-prompt
+        env:
+          AZURE_ENV_NAME: octocat-supply-production
+          AZURE_LOCATION: eastus
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get deployment outputs
+        id: deploy-outputs
+        run: |
+          echo "API_URL=$(azd env get-values --output json | jq -r '.apiServiceUrl')" >> $GITHUB_OUTPUT
+          echo "FRONTEND_URL=$(azd env get-values --output json | jq -r '.frontendUrl')" >> $GITHUB_OUTPUT
+
+      - name: Display deployment URLs
+        run: |
+          echo "API deployed to: ${{ steps.deploy-outputs.outputs.API_URL }}"
+          echo "Frontend deployed to: ${{ steps.deploy-outputs.outputs.FRONTEND_URL }}"

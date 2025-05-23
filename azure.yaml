@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: octocat-supply-chain
+metadata:
+  template: octocat-supply-chain@1.0.0
+services:
+  api:
+    project: ./api
+    language: typescript
+    host: appservice
+    docker:
+      path: ./api/Dockerfile
+
+  frontend:
+    project: ./frontend
+    language: typescript
+    host: staticwebapp
+    docker:
+      path: ./frontend/Dockerfile
+    dist: dist
+      

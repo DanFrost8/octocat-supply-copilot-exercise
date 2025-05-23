@@ -1,0 +1,261 @@
+name: Multi-Stage Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+
+jobs:
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build --workspace=api
+
+      - name: Build Frontend
+        run: npm run build --workspace=frontend
+        
+      - name: Upload API build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-build
+          path: api/dist/
+          
+      - name: Upload Frontend build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/dist/
+          
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Deploy Bicep template
+        id: deploy-bicep
+        run: |
+          RESOURCE_GROUP="octocat-supply-${{ github.event.inputs.environment }}-rg"
+          
+          # Create resource group if it doesn't exist
+          az group create --name "$RESOURCE_GROUP" --location "eastus" --output none
+          
+          # Deploy Bicep template
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters infra/main.parameters.json \
+            --parameters environmentName="${{ github.event.inputs.environment }}" \
+            --output json > deployment-outputs.json
+            
+          # Extract outputs
+          echo "RESOURCE_GROUP=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          echo "APP_SERVICE_NAME=$(jq -r '.properties.outputs.appServiceName.value' deployment-outputs.json)" >> $GITHUB_OUTPUT
+          echo "STATIC_WEB_APP_NAME=$(jq -r '.properties.outputs.staticWebAppName.value' deployment-outputs.json)" >> $GITHUB_OUTPUT
+            
+      - name: Upload deployment outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-outputs
+          path: deployment-outputs.json
+
+  deploy-api:
+    name: Deploy API
+    needs: [build, deploy-infrastructure]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - name: Download API build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: api-build
+          path: api/dist
+          
+      - name: Download deployment outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-outputs
+          path: ./
+          
+      - name: Prepare for deployment
+        run: |
+          # Create a ZIP file from the API build
+          mkdir -p api
+          cp -r api/dist ./
+          echo '{"name":"octocat-supply-api","version":"1.0.0","main":"dist/index.js","scripts":{"start":"node dist/index.js"}}' > package.json
+          zip -r api.zip dist package.json
+          
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Deploy to App Service
+        run: |
+          RESOURCE_GROUP="octocat-supply-${{ github.event.inputs.environment }}-rg"
+          APP_SERVICE_NAME=$(jq -r '.properties.outputs.appServiceName.value' deployment-outputs.json)
+          
+          az webapp deployment source config-zip \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_SERVICE_NAME" \
+            --src api.zip
+
+  deploy-frontend:
+    name: Deploy Frontend
+    needs: [build, deploy-infrastructure, deploy-api]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - name: Download Frontend build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/dist
+          
+      - name: Download deployment outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-outputs
+          path: ./
+          
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Deploy to Static Web App
+        run: |
+          RESOURCE_GROUP="octocat-supply-${{ github.event.inputs.environment }}-rg"
+          STATIC_WEB_APP_NAME=$(jq -r '.properties.outputs.staticWebAppName.value' deployment-outputs.json)
+          
+          az staticwebapp deploy \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$STATIC_WEB_APP_NAME" \
+            --source frontend/dist \
+            --api-location ""
+            
+  post-deployment-verification:
+    name: Verify Deployment
+    needs: [deploy-api, deploy-frontend]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - name: Download deployment outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-outputs
+          path: ./
+          
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Check API health
+        run: |
+          API_URL=$(jq -r '.properties.outputs.apiServiceUrl.value' deployment-outputs.json)
+          
+          # Wait for API to be ready
+          for i in {1..30}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "API is healthy! Status code: $HTTP_STATUS"
+              break
+            fi
+            echo "Waiting for API to be ready... (Attempt $i, Status: $HTTP_STATUS)"
+            sleep 10
+            if [ $i -eq 30 ]; then
+              echo "API health check failed after 30 attempts"
+              exit 1
+            fi
+          done
+          
+      - name: Check Frontend availability
+        run: |
+          FRONTEND_URL=$(jq -r '.properties.outputs.frontendUrl.value' deployment-outputs.json)
+          
+          # Wait for Frontend to be ready
+          for i in {1..20}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Frontend is available! Status code: $HTTP_STATUS"
+              break
+            fi
+            echo "Waiting for Frontend to be available... (Attempt $i, Status: $HTTP_STATUS)"
+            sleep 15
+            if [ $i -eq 20 ]; then
+              echo "Frontend availability check failed after 20 attempts"
+              exit 1
+            fi
+          done
+          
+      - name: Display deployment URLs
+        run: |
+          API_URL=$(jq -r '.properties.outputs.apiServiceUrl.value' deployment-outputs.json)
+          FRONTEND_URL=$(jq -r '.properties.outputs.frontendUrl.value' deployment-outputs.json)
+          
+          echo "=================================================="
+          echo "✅ Deployment to ${{ github.event.inputs.environment }} complete!"
+          echo "=================================================="
+          echo "🌐 API URL: $API_URL"
+          echo "🌐 Frontend URL: $FRONTEND_URL"
+          echo "=================================================="
