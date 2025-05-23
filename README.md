@@ -73,6 +73,31 @@ Day 2
 ## 📚 Documentation
 
 - [Detailed Architecture](./docs/architecture.md)
+- [Azure Deployment Guide](./docs/azure-deployment-guide.md)
+- [Build Instructions](./docs/build.md)
+
+## 🚀 Deploying to Azure
+
+This repository includes infrastructure as code (Bicep) templates to deploy the application to Azure. The deployment creates:
+
+- Azure App Service for hosting the API
+- Azure Static Web Apps for hosting the frontend
+- Azure Key Vault for secure secrets management
+- User-assigned managed identity for secure communication
+
+### Quick Deployment
+
+Use our helper script:
+
+```bash
+# Deploy with default settings (dev environment in eastus)
+./deploy.sh
+
+# Deploy to production in westus2
+./deploy.sh -e prod -l westus2
+```
+
+For detailed deployment instructions and advanced configuration options, see the [Azure Deployment Guide](./docs/azure-deployment-guide.md).
 
 ## 🎓 Additional Resources
 
